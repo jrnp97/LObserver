@@ -12,7 +12,7 @@ def get_main_content(url):
     return res.read()
 
 
-def parse_categories(base_url, categories):
+def parse_category(base_url, categories):
     return {
         cat.attrs['title']: f'{base_url[:-1]}{cat.attrs["href"]}' for cat in categories
     }
@@ -29,11 +29,30 @@ def extract_categories(html_content):
     return nav_bar.findAll('a')
 
 
+def parse_product(product_div):
+    return {
+        meta.attrs['itemprop']: meta.attrs['content'] for meta in product_div.findAll('meta')
+    }
+
+
+def extract_category_products(category_html):
+    parser = BeautifulSoup(category_html, 'html.parser')
+    products = parser.find('div', {'id': 'catalogue-product-container'})
+    for product in products.findAll('div', {'itemtype': 'http://schema.org/Product'}):
+        yield product
+
+
 if __name__ == '__main__':
-    categories = parse_categories(
+    categories = parse_category(
         base_url=home_url,
         categories=extract_categories(
             html_content=get_main_content(home_url),
         ),
     )
-    pprint(categories)
+    for category, url in categories.items():
+        print(f'Products from {category}')
+        pprint(
+            [parse_product(prod) for prod in extract_category_products(category_html=get_main_content(url))]
+        )
+        break
+
