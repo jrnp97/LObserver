@@ -1,7 +1,7 @@
 """ Main script """
 import re
-import sys
 import time
+import logging.config
 import urllib.request as request
 from urllib.error import URLError
 
@@ -9,13 +9,35 @@ from collections.abc import Iterable
 
 from bs4 import BeautifulSoup
 
-home_url = 'https://www.linio.com.co/'
 
 log_config = {
-    'format': {},
-    'logger': {},
-    'handler': {}
+    'version': 1,
+    'formatters': {
+        'brief': {
+            'fmt': '%(level): %(asctime) - %(message)s'
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'brief',
+            'level': 'DEBUG',
+            'stream': 'ext://sys.stdout',
+        },
+    },
+    'loggers': {
+        'main': {
+            'level': 'DEBUG',
+            'handlers': ['console'],
+        },
+    },
 }
+
+logging.config.dictConfig(log_config)
+
+logger = logging.getLogger('main')
+
+home_url = 'https://www.linio.com.co/'
 
 
 def get_database(db_name='ldata'):
@@ -136,11 +158,11 @@ def main_downloader():
     )
     db = get_database()
     for category, cat_url in categories.items():
-        print(f'Products from {category}')
+        logger.debug(f'Products from {category}')
         start = time.perf_counter()
         body = get_main_content(url=cat_url)
         if not body:
-            print('error getting main content')
+            logger.warning('error getting main content')
             continue
         pages = [cat_url]
         pages.extend(
@@ -150,7 +172,7 @@ def main_downloader():
             )
         )
         end = time.perf_counter()
-        print(f'Pages: {pages.__len__()} in {end - start}s')
+        logger.debug(f'Pages: {pages.__len__()} in {end - start}s')
         for cat_page in pages:
             start = time.perf_counter()
             list(map(
@@ -162,8 +184,9 @@ def main_downloader():
                 ),
             ))
             end = time.perf_counter()
-        print(f'Products in {end - start}s')
+        logger.debug(f'Products in {end - start}s')
 
 
 if __name__ == '__main__':
+    logger.info('Start program')
     main_downloader()
