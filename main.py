@@ -59,7 +59,7 @@ def extract_pages(content):
     return [f'?page={page}' for page in range(2, max_page + 1)]
 
 
-if __name__ == '__main__':
+def main_downloader():
     categories = parse_category(
         base_url=home_url,
         categories=extract_categories(
@@ -79,3 +79,7 @@ if __name__ == '__main__':
             )
             break
         break
+
+
+if __name__ == '__main__':
+    main_downloader()
