@@ -1,3 +1,4 @@
 beautifulsoup4==4.9.1
 bs4==0.0.1
+codernitydb3==0.6.0
 soupsieve==2.0.1
