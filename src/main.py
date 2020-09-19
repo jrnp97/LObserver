@@ -65,7 +65,7 @@ def get_database(db_name='ldata'):
 
 def get_main_content(silent=True):
     while True:
-        data = request_queue.get()
+        data = request_queue.get()  # BLOCKING
         try:
             url = data['url']
             logger.info(f'Requesting: {url}')
@@ -176,10 +176,6 @@ def extract_pages(base_url, content, silent=True):
 
 def process_worker(pipe):
     db = get_database('parallel_process')
-    time.sleep(5)
-    logger.info('Ending PWorker.')
-    pipe.close()
-    return
     while True:
         try:
             data = process_queue.get(timeout=120)  # Maximum 2 minutes
@@ -190,6 +186,7 @@ def process_worker(pipe):
         try:
             html_content = data.pop('html_content')
             logger.debug(f'Processing Tasks: {data}')
+            # TODO Improve with
             if data['process'] == 'category':
                 logger.debug('Extracting Categories')
                 categories = parse_category(
