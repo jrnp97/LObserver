@@ -1,14 +1,19 @@
 """ Main script """
 import re
 import time
+import threading
 import logging.config
+import multiprocessing
 import urllib.request as request
 from urllib.error import URLError
+
+import queue
+from multiprocessing import JoinableQueue as PQueue  # Process Queue
+from queue import Queue  # Thread Queue
 
 from collections.abc import Iterable
 
 from bs4 import BeautifulSoup
-
 
 log_config = {
     'version': 1,
@@ -24,11 +29,16 @@ log_config = {
             'level': 'DEBUG',
             'stream': 'ext://sys.stdout',
         },
+        'file_handler': {
+            'class': 'logging.FileHandler',
+            'formatter': 'brief',
+            'filename': 'logs.log'
+        }
     },
     'loggers': {
         'main': {
-            'level': 'DEBUG',
-            'handlers': ['console'],
+            'level': 'INFO',
+            'handlers': ['console', 'file_handler'],
         },
     },
 }
@@ -36,6 +46,9 @@ log_config = {
 logging.config.dictConfig(log_config)
 
 logger = logging.getLogger('main')
+
+request_queue = Queue()
+process_queue = PQueue()
 
 home_url = 'https://www.linio.com.co/'
 
@@ -50,14 +63,26 @@ def get_database(db_name='ldata'):
     return db
 
 
-def get_main_content(url, silent=True):
-    try:
-        res = request.urlopen(url=url)
-        return res.read()
-    except URLError:
-        if silent:
-            return None
-        raise  # TODO Log
+def get_main_content(silent=True):
+    while True:
+        data = request_queue.get()
+        try:
+            url = data['url']
+            logger.info(f'Requesting: {url}')
+            res = request.urlopen(url=url)
+            content = res.read()
+            process_queue.put({
+                'url': data['url'],
+                'html_content': content,
+                'process': data['callback'],
+            })
+        except URLError:
+            if silent:
+                return None
+            logger.exception('Error getting server data')
+            raise
+        finally:
+            request_queue.task_done()
 
 
 def parse_category(base_url, categories, silent=True):
@@ -149,44 +174,76 @@ def extract_pages(base_url, content, silent=True):
     return [f'{base_url}?page={page}' for page in range(2, max_page + 1)]
 
 
-def main_downloader():
-    categories = parse_category(
-        base_url=home_url,
-        categories=extract_categories(
-            html_content=get_main_content(home_url),
-        ),
-    )
-    db = get_database()
-    for category, cat_url in categories.items():
-        logger.debug(f'Products from {category}')
-        start = time.perf_counter()
-        body = get_main_content(url=cat_url)
-        if not body:
-            logger.warning('error getting main content')
-            continue
-        pages = [cat_url]
-        pages.extend(
-            extract_pages(
-                base_url=cat_url,
-                content=body,
-            )
-        )
-        end = time.perf_counter()
-        logger.debug(f'Pages: {pages.__len__()} in {end - start}s')
-        for cat_page in pages:
-            start = time.perf_counter()
-            list(map(
-                lambda prod: db.insert(parse_product(prod)) if prod else None,
-                extract_category_products(
-                    category_html=get_main_content(
-                        cat_page,
+def process_worker(pipe):
+    db = get_database('parallel_process')
+    time.sleep(5)
+    logger.info('Ending PWorker.')
+    pipe.close()
+    return
+    while True:
+        try:
+            data = process_queue.get(timeout=120)  # Maximum 2 minutes
+        except queue.Empty:
+            logger.info('Ending PWorker.')
+            pipe.close()
+            return
+        try:
+            html_content = data.pop('html_content')
+            logger.debug(f'Processing Tasks: {data}')
+            if data['process'] == 'category':
+                logger.debug('Extracting Categories')
+                categories = parse_category(
+                    base_url=home_url,
+                    categories=extract_categories(
+                        html_content=html_content,
                     ),
-                ),
-            ))
-            end = time.perf_counter()
-        logger.debug(f'Products in {end - start}s')
+                )
+                for category, cat_url in categories.items():
+                    logger.debug('Sending jobs.')
+                    pipe.send({
+                        'url': cat_url,
+                        'callback': 'pages'
+                    })
+            elif data['process'] == 'pages':
+                cat_url = data['url']
+                pages = [cat_url]
+                pages.extend(
+                    extract_pages(
+                        base_url=cat_url,
+                        content=html_content,
+                    )
+                )
+                for cat_page in pages:
+                    pipe.send({
+                        'url': cat_page,
+                        'callback': 'products',
+                    })
+            elif data['process'] == 'products':
+                for product in extract_category_products(category_html=html_content):
+                    if not product:
+                        continue
+                    db.insert(parse_product(product))
+        finally:
+            process_queue.task_done()
 
 
 if __name__ == '__main__':
     logger.info('Start program')
-    main_downloader()
+    start = time.perf_counter()
+    parent_conn, child_conn = multiprocessing.Pipe()
+    threading.Thread(target=get_main_content, daemon=True).start()
+    threading.Thread(target=get_main_content, daemon=True).start()
+    multiprocessing.Process(target=process_worker, args=(child_conn,), daemon=True).start()
+    request_queue.put({
+        'url': home_url,
+        'callback': 'category',
+    })
+    while True:
+        try:
+            request_ = parent_conn.recv()
+            request_queue.put(request_)
+        except OSError:
+            logger.info('Process finished')
+            break
+    end = time.perf_counter()
+    logger.info(f'Process Finished in {end - start}s')
