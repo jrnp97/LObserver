@@ -68,7 +68,7 @@ def get_main_content(silent=True):
         data = request_queue.get()  # BLOCKING
         try:
             url = data['url']
-            logger.info(f'Requesting: {url}')
+            logger.debug(f'Requesting: {url}')
             res = request.urlopen(url=url)
             content = res.read()
             process_queue.put({
@@ -178,15 +178,13 @@ def process_worker(pipe):
     db = get_database('parallel_process')
     while True:
         try:
-            data = process_queue.get(timeout=120)  # Maximum 2 minutes
+            data = process_queue.get(timeout=30)  # Maximum 1/2 minutes
         except queue.Empty:
-            logger.info('Ending PWorker.')
-            pipe.close()
+            pipe.send('finish')
             return
         try:
             html_content = data.pop('html_content')
             logger.debug(f'Processing Tasks: {data}')
-            # TODO Improve with
             if data['process'] == 'category':
                 logger.debug('Extracting Categories')
                 categories = parse_category(
@@ -236,11 +234,10 @@ if __name__ == '__main__':
         'callback': 'category',
     })
     while True:
-        try:
-            request_ = parent_conn.recv()
-            request_queue.put(request_)
-        except OSError:
-            logger.info('Process finished')
+        request_ = parent_conn.recv()
+        if request_ == 'finish':
             break
+        request_queue.put(request_)
+    parent_conn.close()
     end = time.perf_counter()
-    logger.info(f'Process Finished in {end - start}s')
+    logger.info(f'Process Finished in {end - start}s :D')
