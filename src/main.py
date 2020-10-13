@@ -13,6 +13,9 @@ from queue import Queue  # Thread Queue
 
 from collections.abc import Iterable
 
+from selenium import webdriver
+from selenium.webdriver.firefox.options import Options
+
 from bs4 import BeautifulSoup
 
 log_config = {
@@ -51,6 +54,20 @@ request_queue = Queue()
 process_queue = PQueue()
 
 home_url = 'https://www.linio.com.co/'
+
+
+def download_b64_image(url):
+    options = Options()
+    options.headless = True
+    driver = webdriver.Firefox(firefox_options=options, executable_path='data/geckodriver')
+    driver.get(url)
+    return driver.get_screenshot_as_base64()
+
+
+def get_product_url(sku):
+    search_url = f'{home_url}search?scroll=&q={sku}'
+    res = request.urlopen(search_url)
+    return res.url
 
 
 def get_database(db_name='ldata'):
