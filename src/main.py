@@ -174,6 +174,79 @@ def extract_pages(base_url, content, silent=True):
     return [f'{base_url}?page={page}' for page in range(2, max_page + 1)]
 
 
+class CategoryProcess:
+
+    def process(self, **kwargs):
+        logger.debug('Extracting Categories')
+        pipe = kwargs['pipe']
+        html_content = kwargs['html_content']
+        categories = parse_category(
+            base_url=home_url,
+            categories=extract_categories(
+                html_content=html_content,
+            ),
+        )
+        for category, cat_url in categories.items():
+            logger.debug('Sending jobs.')
+            pipe.send({
+                'url': cat_url,
+                'callback': 'pages'
+            })
+        return True
+
+
+class PageProcess:
+
+    def process(self, **kwargs):
+        logger.debug('Processing Pages...')
+        pipe = kwargs['pipe']
+        html_content = kwargs['html_content']
+        data = kwargs['data']
+        cat_url = data['url']
+        pages = [cat_url]
+        pages.extend(
+            extract_pages(
+                base_url=cat_url,
+                content=html_content,
+            )
+        )
+        for cat_page in pages:
+            pipe.send({
+                'url': cat_page,
+                'callback': 'products',
+            })
+        return True
+
+
+class ProductProcess:
+
+    def process(self, **kwargs):
+        logger.debug('Processing Products...')
+        html_content = kwargs['html_content']
+        db = kwargs['database']
+        for product in extract_category_products(category_html=html_content):
+            if not product:
+                continue
+            db.insert(parse_product(product))
+        return True
+
+
+class Context:
+    strategies = {
+        'category': CategoryProcess,
+        'pages': PageProcess,
+        'products': ProductProcess,
+    }
+
+    def __init__(self, strategy):
+        if strategy not in self.strategies:
+            raise ValueError(f'Strategy: {strategy} not supported yet')
+        self.strategy = self.strategies[strategy]()
+
+    def process(self, **kwargs):
+        return self.strategy.process(**kwargs)
+
+
 def process_worker(pipe):
     db = get_database('parallel_process')
     while True:
@@ -185,39 +258,13 @@ def process_worker(pipe):
         try:
             html_content = data.pop('html_content')
             logger.debug(f'Processing Tasks: {data}')
-            if data['process'] == 'category':
-                logger.debug('Extracting Categories')
-                categories = parse_category(
-                    base_url=home_url,
-                    categories=extract_categories(
-                        html_content=html_content,
-                    ),
-                )
-                for category, cat_url in categories.items():
-                    logger.debug('Sending jobs.')
-                    pipe.send({
-                        'url': cat_url,
-                        'callback': 'pages'
-                    })
-            elif data['process'] == 'pages':
-                cat_url = data['url']
-                pages = [cat_url]
-                pages.extend(
-                    extract_pages(
-                        base_url=cat_url,
-                        content=html_content,
-                    )
-                )
-                for cat_page in pages:
-                    pipe.send({
-                        'url': cat_page,
-                        'callback': 'products',
-                    })
-            elif data['process'] == 'products':
-                for product in extract_category_products(category_html=html_content):
-                    if not product:
-                        continue
-                    db.insert(parse_product(product))
+            manager = Context(data['process'])
+            manager.process(
+                pipe=pipe,
+                html_content=html_content,
+                data=data,
+                database=db,
+            )
         finally:
             process_queue.task_done()
 
