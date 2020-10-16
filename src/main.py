@@ -1,6 +1,7 @@
 """ Main script """
 import re
 import time
+import datetime
 import threading
 import logging.config
 import multiprocessing
@@ -15,6 +16,8 @@ from collections.abc import Iterable
 
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
+
+from pymongo import MongoClient
 
 from bs4 import BeautifulSoup
 
@@ -133,9 +136,12 @@ def extract_categories(html_content, silent=True):
 
 def parse_product(product_div, silent=True):
     try:
-        return {
+        data = {
             meta.attrs['itemprop']: meta.attrs['content'] for meta in product_div.findAll('meta')
         }
+        data['full_url'] = f'{home_url}{data["url"]}'
+        data['registered_date'] = datetime.datetime.utcnow()
+        return data
     except (AttributeError, KeyError):
         if silent:
             return {}
@@ -244,7 +250,7 @@ class ProductProcess:
         for product in extract_category_products(category_html=html_content):
             if not product:
                 continue
-            db.insert(parse_product(product))
+            db.products.insert_one(parse_product(product))
         return True
 
 
@@ -265,7 +271,8 @@ class Context:
 
 
 def process_worker(pipe):
-    db = get_database('parallel_process')
+    client = MongoClient(port=27017)
+    db = client.linio_data  #get_database('parallel_process')
     while True:
         try:
             data = process_queue.get(timeout=30)  # Maximum 1/2 minutes
