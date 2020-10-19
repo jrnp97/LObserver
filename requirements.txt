@@ -1,4 +1,14 @@
 beautifulsoup4==4.9.1
 bs4==0.0.1
+cloudpickle==1.6.0
 codernitydb3==0.6.0
+colorama==0.4.3
+commonmark==0.9.1
+Pygments==2.7.1
+pymongo==3.11.0
+rich==8.0.0
+scalene==1.1.4
+selenium==3.141.0
 soupsieve==2.0.1
+typing-extensions==3.7.4.3
+urllib3==1.25.10
