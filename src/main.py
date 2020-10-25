@@ -1,31 +1,38 @@
-""" Main script """
+""" Main script using py3.8 """
 import re
 import os
-import time
-import datetime
 import abc
+import time
+import queue
+import datetime
 import logging.config
 import multiprocessing
+
 import urllib.request as request
+
 from urllib.error import URLError
 
-import queue
+from collections.abc import Iterable
 
 from concurrent.futures import ThreadPoolExecutor
 
 from multiprocessing import JoinableQueue as PQueue  # Process Queue
 
-from collections.abc import Iterable
+import pymongo
+
+from yaspin import yaspin
+
+from bs4 import BeautifulSoup
 
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 
-import pymongo
-from pymongo import MongoClient
+from dotenv import load_dotenv
 
-from bs4 import BeautifulSoup
+load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 log_config = {
     'version': 1,
     'formatters': {
@@ -60,11 +67,7 @@ logger = logging.getLogger('main')
 
 process_queue = PQueue()
 
-client = MongoClient(
-    ''
-)
-db = client.linio_data
-db_products = db.products
+client = pymongo.MongoClient(os.getenv('MG_CRED'), port=27017)
 
 home_url = 'https://www.linio.com.co/'
 
@@ -86,33 +89,35 @@ def get_product_url(sku):
     return res.url
 
 
-"""LEGACY
-def get_database(db_name='ldata'):
-    from codernitydb3.database import Database
-    db = Database(db_name)
-    if not db.exists():
-        db.create()
-    else:
-        db.open()
-    return db
-"""
+def get_database():
+    db = client.linio_data
+    return db.products
 
 
-def insert_product(data, silent=True):
-    product = dict(data['product'])
-    logger.debug(f'INSERTING: {product}')
-    if not db_products.find_one({'sku': product['sku']}):
-        db_products.insert_one(product)
-    else:
-        db_products.find_and_modify({
-            'query': {'sku': product['sku']},
-            'update': [{
-                '$set': {'prices': {'$concatArrays': ["$prices", product['prices']]}}
-            }]
-        })
+def insert_product(data, **kwargs):
+    silent = kwargs.get('silent', False)
+    try:
+        database = kwargs['database']
+        product = dict(data['product'])
+        logger.debug(f'INSERTING: {product}')
+        if not database.find_one({'sku': product['sku']}):
+            database.insert_one(product)
+        else:
+            database.find_and_modify(
+                query={'sku': product['sku']},
+                update=[{
+                    '$set': {'prices': {'$concatArrays': ["$prices", product['prices']]}}
+                }]
+            )
+    except (KeyError, TypeError):
+        logger.exception('Error inserting db data')
+        if silent:
+            return None
+        raise
 
 
-def get_main_content(data, silent=True):
+def get_main_content(data, **kwargs):
+    silent = kwargs.get('silent', True)
     try:
         url = data['url']
         logger.debug(f'Requesting: {url}')
@@ -124,9 +129,9 @@ def get_main_content(data, silent=True):
             'process': data['callback'],
         })
     except URLError:
+        logger.exception('Error getting server data')
         if silent:
             return None
-        logger.exception('Error getting server data')
         raise
 
 
@@ -328,12 +333,27 @@ def process_worker(pipe):
             process_queue.task_done()
 
 
+def process_worker_msg(msg, route, pooling):
+    if request_ == 'finish':
+        return False
+    elif not isinstance(msg, dict):
+        logger.warning(f'Process message is not a dict o.0?, {request_}')
+        return True
+    route_ = request_.pop('route', None)
+    fnc = route.get(route_, None)
+    if not fnc:
+        logger.critical(f'Route: {route_} is not defined o.0?')
+        return True
+    pooling.submit(fnc, **{'data': request_, 'database': collection})
+    return True
+
+
 if __name__ == '__main__':
     logger.info(f'Start program {datetime.datetime.now()}')
-    db_products.create_index('sku', **{"unique": True})
+    collection = get_database()
+    collection.create_index('sku', **{"unique": True})
     start = time.perf_counter()
     parent_conn, child_conn = multiprocessing.Pipe()
-    thread_pooling = ThreadPoolExecutor(max_workers=5)
     multiprocessing.Process(target=process_worker, args=(child_conn,), daemon=True).start()
     router = {
         'request': get_main_content,
@@ -343,20 +363,15 @@ if __name__ == '__main__':
         'url': home_url,
         'callback': 'category',
     }
-    thread_pooling.submit(router.get('request'), **{'data': kwg})
-    while True:
-        request_ = parent_conn.recv()
-        if request_ == 'finish':
-            break
-        elif not isinstance(request_, dict):
-            continue
-        route = request_.pop('route', None)
-        fnc = router.get(route, None)
-        if not fnc:
-            continue
-        logger.debug(f'Sending to pool job: {fnc.__name__}')
-        thread_pooling.submit(fnc, **{'data': request_})
-    parent_conn.close()
-    # TODO ThreadPooling finish before time.
+    with yaspin(text='Scrapping product information') as sp:
+        with ThreadPoolExecutor() as thread_pooling:
+            thread_pooling.submit(router['request'], **{'data': kwg})
+            while True:
+                request_ = parent_conn.recv()
+                if not process_worker_msg(msg=request_, pooling=thread_pooling, route=router):
+                    parent_conn.close()
+                    break
+            sp.text = 'All info was requested, inserting on database...'
+
     end = time.perf_counter()
     logger.info(f'Process Finished in {end - start}s :D')

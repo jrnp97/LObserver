@@ -5,3 +5,4 @@ __pycache__/
 ldata/
 *.log
 parallel_process/
+.env
