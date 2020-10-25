@@ -76,10 +76,10 @@ client = pymongo.MongoClient(os.getenv('MG_CRED'), port=27017)
 
 home_url = 'https://www.linio.com.co/'
 
-unique_ = {}  # Using like system-cached
+# unique_ = {}  # Using like system-cached
 
 
-class Singlenton(type):
+class Singleton(type):
     _instances = {}
 
     def __call__(cls, *args, **kwargs):
@@ -89,7 +89,7 @@ class Singlenton(type):
         return cls._instances[cls]
 
 
-class Firefox(metaclass=Singlenton):
+class Firefox(metaclass=Singleton):
 
     @staticmethod
     def create_driver_session(session_id, executor_url):
@@ -204,9 +204,11 @@ def insert_product(data, **kwargs):
         database = kwargs['database']
         product = dict(data['product'])  # Not test yet insert_product_screenshot(data['product'])
         sku = product['sku']
+        '''
         if sku in unique_:
             return None
         unique_[sku] = 1
+        '''
         if not database.find_one({'sku': sku}):
             database.insert_one(product)
         else:
