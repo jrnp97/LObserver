@@ -76,8 +76,6 @@ client = pymongo.MongoClient(os.getenv('MG_CRED'), port=27017)
 
 home_url = 'https://www.linio.com.co/'
 
-# unique_ = {}  # Using like system-cached
-
 
 class Singleton(type):
     _instances = {}
